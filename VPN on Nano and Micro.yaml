@@ -1,0 +1,223 @@
+{
+    "Description": "Setting up your own private and secure VPN on t2/t3 nano/micro EC2 instances.",
+"Parameters": {
+        "Username": {
+            "Description": "VPN Username",
+            "Type": "String",
+            "MinLength": "1",
+            "MaxLength": "255",
+            "AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*",
+            "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters."
+        },
+        "VPNPassword": {
+            "NoEcho": "true",
+            "Description": "VPN Password (Min 4 characters)",
+            "Type": "String",
+            "MinLength": "4",
+            "MaxLength": "255",
+            "ConstraintDescription": "must contain atleast 4 characters."
+        },
+        "VPNPhrase": {
+            "NoEcho": "true",
+            "Description": "Passphrase for IPSEC PSK (Min 4 characters)",
+            "Type": "String",
+            "MinLength": "4",
+            "MaxLength": "255",
+            "ConstraintDescription": "must contain atleast 4 characters."
+        },
+        "Size": {
+            "Description": "Instance Type",
+            "Type": "String",
+            "Default": "t3a.nano",
+            "AllowedValues": [
+                "t3a.nano",
+                "t3.nano",
+                "t2.nano",
+                "t3a.micro",
+                "t3.micro",
+                "t2.micro"
+            ]
+        }
+    },
+"Mappings": {
+        "AWSInstanceType2Arch": {
+            "t3a.nano": {
+                "InstanceType": "t3a.nano"
+            },
+            "t3.nano": {
+                "InstanceType": "t3.nano"
+            },
+            "t2.nano": {
+                "InstanceType": "t2.nano"
+            },
+            "t3a.micro": {
+                "InstanceType": "t3a.micro"
+            },
+            "t3.micro": {
+                "InstanceType": "t3.micro"
+            },
+            "t2.micro": {
+                "InstanceType": "t2.micro"
+            }
+        },
+        "AWSRegionArch2AMI": {
+            "us-east-1": {
+                "HVM64": "ami-80861296"
+            },
+            "us-east-2": {
+                "HVM64": "ami-618fab04"
+            },
+            "us-west-1": {
+                "HVM64": "ami-2afbde4a"
+            },
+            "us-west-2": {
+                "HVM64": "ami-efd0428f"
+            },
+            "eu-west-1": {
+                "HVM64": "ami-a8d2d7ce"
+            },
+            "eu-west-2": {
+                "HVM64": "ami-f1d7c395"
+            },
+            "eu-west-3": {
+                "HVM64": "ami-c1cf79bc"
+            },
+            "eu-central-1": {
+                "HVM64": "ami-060cde69"
+            },
+            "ap-northeast-1": {
+                "HVM64": "ami-afb09dc8"
+            },
+            "ap-northeast-2": {
+                "HVM64": "ami-66e33108"
+            },
+            "ap-southeast-1": {
+                "HVM64": "ami-8fcc75ec"
+            },
+            "ap-southeast-2": {
+                "HVM64": "ami-96666ff5"
+            },
+            "sa-east-1": {
+                "HVM64": "ami-4090f22c"
+            },
+            "ap-south-1": {
+                "HVM64": "ami-c2ee9dad"
+            },
+            "ca-central-1": {
+                "HVM64": "ami-b3d965d7"
+            }
+        }
+    },
+"Resources": {
+        "VPNServerInstance": {
+            "Type": "AWS::EC2::Instance",
+            "DeletionPolicy":"Delete",
+            "Properties": {
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "AWSRegionArch2AMI",
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "HVM64"
+                    ]
+                },
+                "InstanceType": {
+                    "Fn::FindInMap": [
+                        "AWSInstanceType2Arch",
+                        {
+                            "Ref": "Size"
+                        },
+                        "InstanceType"
+                    ]
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "VPNSecurityGroup"
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Ref": "AWS::StackName"
+                        }
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "#",
+                            [
+                                {
+                                    "Fn::Sub": "#!/bin/sh\n#Passing variables to shell\nYOUR_IPSEC_PSK=${VPNPhrase}\nYOUR_USERNAME=${Username}\nYOUR_PASSWORD=${VPNPassword}\n"
+                                },
+                                "#VPN 1 - L2TP IPSEC Server\nwget https://git.io/vpnsetup -O vpnsetup.sh && sudo \\\nVPN_IPSEC_PSK=$YOUR_IPSEC_PSK \\\nVPN_USER=$YOUR_USERNAME \\\nVPN_PASSWORD=$YOUR_PASSWORD sh vpnsetup.sh\n\n#VPN 2 - Setup PPTP Server\napt-get install pptpd -y\necho \"localip 10.0.0.1\" >> /etc/pptpd.conf\necho \"remoteip 10.0.0.100-200\" >> /etc/pptpd.conf\necho \"$YOUR_USERNAME pptpd $YOUR_PASSWORD *\" >> /etc/ppp/chap-secrets\necho \"ms-dns 8.8.8.8\" >> /etc/ppp/pptpd-options\necho \"ms-dns 8.8.4.4\" >> /etc/ppp/pptpd-options\nservice pptpd restart\n\necho \"net.ipv4.ip_forward = 1\" >> /etc/sysctl.conf\nsysctl -p\niptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && iptables-save\n"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+        "VPNSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+	    "DeletionPolicy":"Delete",
+            "Properties": {
+                "GroupDescription": "VPN Security Groups",
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "500",
+                        "ToPort": "500",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "udp",
+                        "FromPort": "500",
+                        "ToPort": "500",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "udp",
+                        "FromPort": "4500",
+                        "ToPort": "4500",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "1723",
+                        "ToPort": "1723",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "udp",
+                        "FromPort": "1723",
+                        "ToPort": "1723",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "udp",
+                        "FromPort": "1701",
+                        "ToPort": "1701",
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        }
+    },
+"Outputs": {
+        "VPNServerAddress": {
+            "Description": "Use the IP as Server Address or VPN Host",
+            "Value": {
+                "Fn::GetAtt": [
+                    "VPNServerInstance",
+                    "PublicIp"
+                ]
+            }
+        },
+        "WebdigiNotes": {
+            "Description": "Allow upto 5 minutes after setup to connect. Please contact us at https://www.webdigi.co.uk/blog/2015/how-to-setup-your-own-private-secure-free-vpn-on-the-amazon-aws-cloud-in-10-minutes/ for any help!",
+            "Value": "Comments"
+        }
+    }
+}
